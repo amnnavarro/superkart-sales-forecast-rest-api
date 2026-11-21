@@ -1,6 +1,7 @@
 # ---------------------------------------------------------------
 # SuperKart Sales Forecast – Streamlit UI (frontend)
 # ---------------------------------------------------------------
+import io
 import streamlit as st
 import pandas as pd
 import requests
@@ -62,20 +63,63 @@ if st.button("Predict", type="primary"):
 
 # ============================ BATCH (CSV) ============================
 st.subheader("Batch Prediction")
+
+# Full schema of the model; older files (Store_Age_Years / Product_Type_Category) are also accepted
+REQUIRED_COLUMNS = [
+    "Product_Weight", "Product_Sugar_Content", "Product_Allocated_Area", "Product_MRP",
+    "Product_Type", "Store_Establishment_Year", "Store_Size",
+    "Store_Location_City_Type", "Store_Type", "Product_Id_char",
+]
+CORE_COLUMNS = ["Product_Weight", "Product_Sugar_Content", "Product_Allocated_Area", "Product_MRP",
+                "Store_Size", "Store_Location_City_Type", "Store_Type", "Product_Id_char"]
+st.caption("Full schema: " + ", ".join(REQUIRED_COLUMNS) +
+           ". Files that have Store_Age_Years instead of Store_Establishment_Year, or no Product_Type, "
+           "are also accepted (a default is used and you are told which).")
+
+# A small sample file so the expected format is clear
+sample_df = pd.DataFrame([
+    [12.66, "Low Sugar", 0.027, 117.08, "Frozen Foods", 2009, "Medium", "Tier 2", "Supermarket Type2", "FD"],
+    [16.20, "Regular", 0.048, 182.50, "Dairy", 1987, "High", "Tier 2", "Supermarket Type1", "FD"],
+    [9.80, "No Sugar", 0.062, 95.40, "Household", 1998, "Small", "Tier 3", "Food Mart", "NC"],
+    [13.50, "Low Sugar", 0.031, 150.90, "Snack Foods", 1999, "Medium", "Tier 1", "Departmental Store", "FD"],
+], columns=REQUIRED_COLUMNS)
+st.download_button("Download sample CSV", sample_df.to_csv(index=False),
+                   file_name="superkart_sample_batch.csv", mime="text/csv")
+
 uploaded_file = st.file_uploader("Upload a CSV file with the model features", type=["csv"])
 
-if uploaded_file is not None and st.button("Predict Batch", type="primary"):
-    try:
-        response = requests.post(f"{BACKEND_URL}/v1/predictbatch",
-                                 files={"file": uploaded_file.getvalue()}, timeout=120)
-        if response.status_code == 200:
-            # API returns {row index: prediction}; show it as a table and offer a download
-            result = pd.DataFrame(list(response.json().items()), columns=["Row", "Predicted Sales"])
-            st.success("Batch predictions completed!")
-            st.dataframe(result)
-            st.download_button("Download predictions (CSV)", result.to_csv(index=False),
-                               file_name="superkart_predictions.csv", mime="text/csv")
-        else:
-            st.error(f"API error ({response.status_code}): {response.json().get('error', response.text)}")
-    except requests.exceptions.RequestException as e:
-        st.error(f"Unable to connect to the prediction API: {e}")
+if uploaded_file is not None:
+    file_bytes = uploaded_file.getvalue()
+    uploaded_df = pd.read_csv(io.BytesIO(file_bytes))
+    cols = set(uploaded_df.columns)
+
+    # Check the columns before calling the API (Product_Id can replace Product_Id_char)
+    missing = [c for c in CORE_COLUMNS if c not in cols and not (c == "Product_Id_char" and "Product_Id" in cols)]
+    if "Store_Establishment_Year" not in cols and "Store_Age_Years" not in cols:
+        missing.append("Store_Establishment_Year (or Store_Age_Years)")
+
+    if missing:
+        st.error(f"The file is missing required columns: {missing}. Download the sample CSV above to see the format.")
+    else:
+        if "Product_Type" not in cols:
+            st.info("No Product_Type column: the most frequent product type from training will be used.")
+        if "Store_Establishment_Year" not in cols:
+            st.info("Store_Establishment_Year will be computed from Store_Age_Years.")
+
+        if st.button("Predict Batch", type="primary"):
+            try:
+                response = requests.post(f"{BACKEND_URL}/v1/predictbatch",
+                                         files={"file": file_bytes}, timeout=120)
+                if response.status_code == 200:
+                    # API returns {row index: prediction}; show it as a table and offer a download
+                    result = pd.DataFrame(list(response.json().items()), columns=["Row", "Predicted Sales"])
+                    st.success("Batch predictions completed!")
+                    if response.headers.get("X-Notes"):
+                        st.warning(response.headers["X-Notes"])
+                    st.dataframe(result)
+                    st.download_button("Download predictions (CSV)", result.to_csv(index=False),
+                                       file_name="superkart_predictions.csv", mime="text/csv")
+                else:
+                    st.error(f"API error ({response.status_code}): {response.json().get('error', response.text)}")
+            except requests.exceptions.RequestException as e:
+                st.error(f"Unable to connect to the prediction API: {e}")
