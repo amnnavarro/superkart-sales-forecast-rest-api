@@ -1,48 +1,46 @@
-# ---------------------------------------------------------------
-# SuperKart Sales Forecast – Flask REST API (backend)
-# ---------------------------------------------------------------
+# SuperKart Flask API (backend)
 import numpy as np
 import pandas as pd
 import joblib
 from flask import Flask, request, jsonify
 
-# Create the Flask app (the Dockerfile/gunicorn refers to this object name)
+# create the app
 superkart_api = Flask("SuperKart Sales Forecaster")
 
-# Load the serialized pipeline (preprocessing + tuned model) once at startup
+# load the model once at startup
 model = joblib.load("superkart_model.joblib")
 
-# Feature schema the model was trained on (order irrelevant, names must match)
+# features the model was trained on
 FEATURES = [
     "Product_Weight", "Product_Sugar_Content", "Product_Allocated_Area", "Product_MRP",
     "Product_Type", "Store_Establishment_Year", "Store_Size",
     "Store_Location_City_Type", "Store_Type", "Product_Id_char",
 ]
 
-# Used ONLY to turn Store_Age_Years (older template schema) into an establishment year
+# only used to turn Store_Age_Years into a year
 REFERENCE_YEAR = 2025
 
 
 def prepare_features(df):
-    # Return (features in the model's schema, list of notes about any fallback that was applied)
+    # returns the features and notes about any default used
     df = df.copy()
     notes = []
 
-    # Derive Product_Id_char if only Product_Id was sent
+    # get Product_Id_char from Product_Id if needed
     if "Product_Id_char" not in df.columns and "Product_Id" in df.columns:
         df["Product_Id_char"] = df["Product_Id"].str[:2]
 
-    # Harmonize the one known label inconsistency
+    # fix the 'reg' label
     if "Product_Sugar_Content" in df.columns:
         df["Product_Sugar_Content"] = df["Product_Sugar_Content"].replace({"reg": "Regular"})
 
-    # Older template schema: Store_Age_Years -> Store_Establishment_Year
+    # older files: Store_Age_Years to Store_Establishment_Year
     if "Store_Establishment_Year" not in df.columns and "Store_Age_Years" in df.columns:
         df["Store_Establishment_Year"] = REFERENCE_YEAR - df["Store_Age_Years"]
         notes.append(f"Store_Establishment_Year was computed as {REFERENCE_YEAR} - Store_Age_Years.")
 
-    # Product_Type cannot be rebuilt from Product_Type_Category. Leave it empty: the pipeline's
-    # imputer fills it with the most frequent product type seen in training.
+    # Product_Type can't be rebuilt from Product_Type_Category, leave it empty,
+    # the pipeline imputer fills it with the most common type
     if "Product_Type" not in df.columns:
         df["Product_Type"] = np.nan
         notes.append("Product_Type was not provided: the most frequent product type in the training data was used.")
@@ -53,13 +51,13 @@ def prepare_features(df):
     return df[FEATURES], notes
 
 
-# Home route (GET): quick check that the API is alive
+# home route
 @superkart_api.get("/")
 def home():
     return "Welcome to the SuperKart Sales Forecast API!"
 
 
-# Online inference (POST): one JSON record -> one prediction
+# single prediction
 @superkart_api.post("/v1/predict")
 def predict_sales():
     try:
@@ -69,7 +67,7 @@ def predict_sales():
 
         input_df, notes = prepare_features(pd.DataFrame([payload]))
 
-        # float() converts the NumPy value so jsonify can serialize it
+        # float() so jsonify can handle it
         result = {"Predicted Sales": round(float(model.predict(input_df)[0]), 2)}
         if notes:
             result["Notes"] = notes
@@ -81,7 +79,7 @@ def predict_sales():
         return jsonify({"error": f"Prediction failed: {e}"}), 500
 
 
-# Batch inference (POST): CSV file -> {row index: prediction}
+# batch prediction
 @superkart_api.post("/v1/predictbatch")
 def predict_sales_batch():
     try:
@@ -92,7 +90,7 @@ def predict_sales_batch():
         features, notes = prepare_features(input_df)
         preds = model.predict(features)
 
-        # Keys = row index of the uploaded file, values = predicted sales
+        # row index: predicted sales
         response = jsonify({str(i): round(float(p), 2) for i, p in zip(input_df.index, preds)})
         if notes:
             response.headers["X-Notes"] = " | ".join(notes)   # the body stays {row: prediction}
@@ -104,6 +102,6 @@ def predict_sales_batch():
         return jsonify({"error": f"Batch prediction failed: {e}"}), 500
 
 
-# Local run (in Docker, gunicorn starts the app instead)
+# local run
 if __name__ == "__main__":
     superkart_api.run(debug=True)
