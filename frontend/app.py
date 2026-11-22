@@ -1,19 +1,17 @@
-# ---------------------------------------------------------------
-# SuperKart Sales Forecast – Streamlit UI (frontend)
-# ---------------------------------------------------------------
+# SuperKart Streamlit app (frontend)
 import io
 import streamlit as st
 import pandas as pd
 import requests
 
-# Backend reached through the Docker network (container name = "backend")
+# backend address on the Docker network
 BACKEND_URL = "http://backend:7860"
 
 st.set_page_config(page_title="SuperKart Sales Forecast", layout="centered")
 st.title("SuperKart Sales Forecast")
 st.write("Predict the total sales of a product in a store, one record at a time or in batch.")
 
-# ============================ ONLINE (single) ============================
+# online prediction
 st.subheader("Online Prediction")
 
 col1, col2 = st.columns(2)
@@ -37,7 +35,7 @@ with col2:
                                              "Supermarket Type2", "Food Mart"], index=2)
     store_year = st.number_input("Store establishment year", min_value=1950, max_value=2030, value=2009, step=1)
 
-# Build the JSON payload with exactly the features the model expects
+# payload with the model features
 payload = {
     "Product_Weight": product_weight,
     "Product_Sugar_Content": product_sugar,
@@ -61,10 +59,10 @@ if st.button("Predict", type="primary"):
     except requests.exceptions.RequestException as e:
         st.error(f"Unable to connect to the prediction API: {e}")
 
-# ============================ BATCH (CSV) ============================
+# batch prediction
 st.subheader("Batch Prediction")
 
-# Full schema of the model; older files (Store_Age_Years / Product_Type_Category) are also accepted
+# model columns (older files are also accepted)
 REQUIRED_COLUMNS = [
     "Product_Weight", "Product_Sugar_Content", "Product_Allocated_Area", "Product_MRP",
     "Product_Type", "Store_Establishment_Year", "Store_Size",
@@ -76,7 +74,7 @@ st.caption("Full schema: " + ", ".join(REQUIRED_COLUMNS) +
            ". Files that have Store_Age_Years instead of Store_Establishment_Year, or no Product_Type, "
            "are also accepted (a default is used and you are told which).")
 
-# A small sample file so the expected format is clear
+# sample file to show the format
 sample_df = pd.DataFrame([
     [12.66, "Low Sugar", 0.027, 117.08, "Frozen Foods", 2009, "Medium", "Tier 2", "Supermarket Type2", "FD"],
     [16.20, "Regular", 0.048, 182.50, "Dairy", 1987, "High", "Tier 2", "Supermarket Type1", "FD"],
@@ -93,7 +91,7 @@ if uploaded_file is not None:
     uploaded_df = pd.read_csv(io.BytesIO(file_bytes))
     cols = set(uploaded_df.columns)
 
-    # Check the columns before calling the API (Product_Id can replace Product_Id_char)
+    # check the columns before calling the API
     missing = [c for c in CORE_COLUMNS if c not in cols and not (c == "Product_Id_char" and "Product_Id" in cols)]
     if "Store_Establishment_Year" not in cols and "Store_Age_Years" not in cols:
         missing.append("Store_Establishment_Year (or Store_Age_Years)")
@@ -111,7 +109,7 @@ if uploaded_file is not None:
                 response = requests.post(f"{BACKEND_URL}/v1/predictbatch",
                                          files={"file": file_bytes}, timeout=120)
                 if response.status_code == 200:
-                    # API returns {row index: prediction}; show it as a table and offer a download
+                    # show the results as a table with a download
                     result = pd.DataFrame(list(response.json().items()), columns=["Row", "Predicted Sales"])
                     st.success("Batch predictions completed!")
                     if response.headers.get("X-Notes"):
